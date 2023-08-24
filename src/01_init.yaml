@@ -1,0 +1,222 @@
+---
+# Based on: https://akyriako.medium.com/install-kubernetes-on-ubuntu-20-04-f1791e8cf799
+# Part 1.
+# Chapter: Configure host names and machine ids
+- name: Generate ids for hosts
+  hosts: all
+  become: true
+  become_user: root
+  tasks:
+    - name: Remove
+      file:
+        path: /etc/machine-id
+        state: absent
+    - name: Regenerate id
+      shell: dbus-uuidgen --ensure=/etc/machine-id
+
+- name: Hostname - master
+  hosts: ubuntu1
+  gather_facts: no
+  become: true
+  become_user: root
+  tasks:
+    - name: Set hostname
+      shell: hostnamectl set-hostname master.kubernetes.lab
+    - name: Get IP of enp0s3
+      shell: ip -4 addr show enp0s3 | grep -oP '(?<=inet\s)\d+(\.\d+){3}'
+      register: enp0s3_ip
+
+- name: Hostname - worker1
+  hosts: ubuntu2
+  gather_facts: no
+  become: true
+  become_user: root
+  tasks:
+    - name: Set hostname
+      shell: hostnamectl set-hostname wrk-01.kubernetes.lab
+    - name: Get IP of enp0s3
+      shell: ip -4 addr show enp0s3 | grep -oP '(?<=inet\s)\d+(\.\d+){3}'
+      register: enp0s3_ip
+
+- name: Hostname - worker2
+  hosts: ubuntu3
+  gather_facts: no
+  become: true
+  become_user: root
+  tasks:
+    - name: Set hostname
+      shell: hostnamectl set-hostname wrk-02.kubernetes.lab
+    - name: Get IP of enp0s3
+      shell: ip -4 addr show enp0s3 | grep -oP '(?<=inet\s)\d+(\.\d+){3}'
+      register: enp0s3_ip
+
+- name: Update /etc/hosts file
+  hosts: all
+  gather_facts: no
+  become: true
+  become_user: root
+  tasks:
+  - name: Add master entry to /etc/hosts
+    lineinfile:
+      path: /etc/hosts
+      line: "{{ hostvars.ubuntu1.enp0s3_ip.stdout }} master.kubernetes.lab master"
+  - name: Add worker1 entry to /etc/hosts
+    lineinfile:
+      path: /etc/hosts
+      line: "{{ hostvars.ubuntu2.enp0s3_ip.stdout }} wrk-01.kubernetes.lab wrk-01"
+  - name: Add worker2 entry to /etc/hosts
+    lineinfile:
+      path: /etc/hosts
+      line: "{{ hostvars.ubuntu3.enp0s3_ip.stdout }} wrk-02.kubernetes.lab wrk-02"
+
+# Chapter: Update Ubuntu
+- name: Update packages and reboot machine
+  hosts: all
+  gather_facts: no
+  become: true
+  become_user: root
+  tasks:
+  - name: Install ntp
+    apt:
+      name: ntp
+      state: present
+  - name: Force update date
+    shell: systemctl restart ntp
+  - name: Clear before updating cache
+    file:
+      path: /var/lib/apt/lists/
+      state: absent
+  - name: Recreate dir for apt
+    file:
+      path: /var/lib/apt/lists/
+      state: directory
+  - name: Update package cache and upgrade installed software
+    apt:
+      update_cache: yes
+      upgrade: 'yes'
+  - name: Restart machines
+    reboot:
+      reboot_timeout: 360
+      pre_reboot_delay: 10
+      test_command: uptime
+    become: true
+    async: 0
+    poll: 0
+
+- name: Update hosts and install Kubernetes
+  hosts: all
+  gather_facts: no
+  become: true
+  become_user: root
+  tasks:
+    # Chapter: Add Kubernetes repositories    
+    - name: Install dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+        state: present
+    - name: Import Google Cloud apt-key
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    - name: Create kubernetes repo file
+      file:
+        path: "/etc/apt/sources.list.d/kubernetes.list"
+        state: "touch"
+    - name: Add K8s Source
+      blockinfile:
+        path: "/etc/apt/sources.list.d/kubernetes.list"
+        block: |
+          deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+    # Chapter: Install Kubernetes tools
+    - name: Install kubernetes
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+          - kubernetes-cni
+        state: present
+    - name: Freeze kubernetes
+      shell: apt-mark hold kubelet kubeadm kubectl
+    # Chapter: Load Kernel modules & settings
+    - name: Executing modprobe
+      shell: |
+        modprobe overlay
+        modprobe br_netfilter
+    - name: Set system configurations for Kubernetes networking
+      file:
+        path: "/etc/sysctl.d/kubernetes.conf"
+        state: "touch"
+    - name: Add conf of Kernel for containerd
+      blockinfile:
+        path: "/etc/sysctl.d/kubernetes.conf"
+        block: |
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.ipv4.ip_forward = 1
+    - name: Apply new settings
+      command: sysctl --system
+    # Chapter: Install Containerd
+    - name: Install dependencies for Containerd
+      apt:
+        name:
+          - gnupg
+          - lsb-release
+        state: present
+    - name: Create keyrings dir
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+    - name: Download gpg
+      shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      args:
+        warn: false
+    - name: Add entry to docker.list
+      shell: echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    - name: Remove containerd package
+      apt:
+        name: containerd
+        state: absent
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+    - name: Install containerd.io package
+      apt:
+        name: containerd.io
+        state: present
+        update_cache: yes
+        force_apt_get: yes
+    - name: Remove containerd config
+      file:
+        path: /etc/containerd/config.toml
+        state: absent
+    - name: Restart containerd service
+      systemd:
+        name: containerd
+        state: restarted
+    # Chapter: Disable swap.
+    - name: Disable swap
+      shell: |
+        sed -ri '/\sswap\s/s/^#?/#/' /etc/fstab
+        swapoff -a
+      args:
+        warn: false
+    - name: Solving network problem
+      shell: |
+        modprobe bridge
+        modprobe br_netfilter
+        sysctl -p /etc/sysctl.conf
+# from: https://stackoverflow.com/questions/55571566/unable-to-bring-up-kubernetes-api-server
+# also cure for: https://stackoverflow.com/questions/75935431/kube-proxy-and-kube-flannel-crashloopbackoff
+    - name: Solving network problem with last Ubuntus
+      shell: |
+        containerd config default | tee /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml  
+        service containerd restart
+        service kubelet restart

@@ -1,0 +1,96 @@
+---
+# Based on: https://akyriako.medium.com/install-kubernetes-on-ubuntu-20-04-f1791e8cf799
+# Part 2.
+# Executed only on master
+# Chapter: Initialize the cluster with kubeadm
+- name: Initialize the cluster with kubeadm
+  hosts: master
+  become: true
+  become_user: root
+  tasks:
+    - name: Add conf of Kernel for containerd
+      blockinfile:
+        path: "/etc/sysctl.conf"
+        block: "net.bridge.bridge-nf-call-iptables = 1"
+    - name: Enable kubelet
+      systemd:
+        name: kubelet
+        enabled: yes
+    - name: Introduce a delay to initialize cluster
+      pause:
+        seconds: 10
+    - name: Initialize cluster
+      shell: |
+        kubeadm init --v=5 \
+        --upload-certs \
+        --apiserver-advertise-address=10.30.10.11 \
+        --control-plane-endpoint=master.kubernetes.lab:6443 \
+        --pod-network-cidr=10.244.0.0/16 \
+        --ignore-preflight-errors=NumCPU
+      args:
+        executable: /bin/bash
+    - name: Configure kubectl in root account
+      shell: |
+        mkdir -p $HOME/.kube
+        cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        chown $(id -u):$(id -g) $HOME/.kube/config
+
+- name: Prepare for joining nodes
+  hosts: master
+  become: true
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: Get the worker nodes join command
+      command: kubeadm token create --print-join-command
+      register: join_command
+    - name: Print join command
+      debug:
+        var: join_command.stdout
+
+- name: Join nodes to cluster
+  hosts: workers
+  become: true
+  become_user: root
+  tasks:
+    - name: Execute joining command
+      shell: "{{ hostvars[groups['master'][0]]['join_command']['stdout'] }}"
+
+- name: Check if nodes joined and configure network
+  hosts: master
+  become: true
+  become_user: root
+  gather_facts: no
+  tasks:
+  - name: Introduce a delay to give nodes 20 seconds
+    pause:
+      seconds: 20
+  - name: Check list of nodes
+    shell: kubectl get nodes -o wide
+    register: command_output
+  - name: Print list of nodes in cluster
+    debug:
+      var: command_output.stdout_lines
+  - name: Deploy POD network
+    shell: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+  - name: Introduce a delay to give pods 20 seconds
+    pause:
+      seconds: 20
+  - name: Check PODs
+    shell: kubectl get pods -A -o wide
+    register: command_output
+  - name: Print list of PODs in cluster
+    debug:
+      var: command_output.stdout_lines
+
+- name: Fetch .kube/config from master to current account at host
+  hosts: master
+  become: true
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: Fetch File from Remote Host
+      fetch:
+        src: /root/.kube/config
+        dest: ~/.kube/
+        flat: yes

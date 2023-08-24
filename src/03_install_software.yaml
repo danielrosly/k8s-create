@@ -1,0 +1,93 @@
+# First part based on: https://akyriako.medium.com/install-kubernetes-on-ubuntu-20-04-f1791e8cf799
+# Chapter "Deploy Kubernetes Metrics Server"
+# Executed only at master
+- name: Install Helm
+  hosts: master
+  become: true
+  become_user: root
+  tasks:
+    - name: Download helm signing
+      shell: curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null
+      args:
+        warn: false
+# Dependency apt-transport-https is installed in part 01
+    - name: Clear before updating cache
+      shell: timedatectl set-local-rtc 1
+    - name: Configure helm repository
+      shell: echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | tee /etc/apt/sources.list.d/helm-stable-debian.list
+    - name: Force update system time
+      shell: systemctl restart ntp
+    - name: Update package cache
+      apt:
+        update_cache: yes
+    - name: Install Helm using apt
+      apt:
+        name: helm
+        state: present
+
+# https://github.com/kubernetes-sigs/metrics-server
+- name: Install Metrics-Server
+  hosts: master
+  become: true
+  become_user: root
+  tasks:
+    - name: Add metrics-server repo
+      shell: helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+    - name: Update helm repo
+      shell: helm repo update
+    - name: Install metrics server
+      shell: helm install metrics-server metrics-server/metrics-server --namespace kube-system
+
+# LoadBalancer
+# Based on: https://medium.com/tektutor/using-metal-lb-on-a-bare-metal-onprem-kubernetes-setup-6d036af1d20c
+- name: Install Metal LB
+  hosts: master
+  become: true
+  become_user: root
+  tasks:
+    - name: Create Metal LB
+      shell: kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.7/config/manifests/metallb-native.yaml
+    - name: Copy adress pool to remote host
+      copy:
+        src: ipaddresspool.yaml
+        dest: /home/ansible/ipaddresspool.yaml
+    - name: Copy advertisment to remote host
+      copy:
+        src: l2advertisement.yaml
+        dest: /home/ansible/l2advertisement.yaml
+    - name: Wait for MetalLB PODs to be ready
+      shell: kubectl wait pods -n metallb-system --all --for condition=Ready --timeout=90s
+    - name: Apply manifests
+      shell: |
+        kubectl apply -f /home/ansible/ipaddresspool.yaml
+        kubectl apply -f /home/ansible/l2advertisement.yaml    
+
+# ArgoCD: https://argo-cd.readthedocs.io/en/stable/getting_started/
+# This one can also be used, but needs installation: https://docs.ansible.com/ansible/latest/collections/kubernetes/index.html
+- name: Install ArgoCD
+  hosts: master
+  become: true
+  become_user: root
+  tasks:
+    - name: Create namespace
+      shell: kubectl create namespace argocd
+    - name: Install ArgoCD
+      shell: kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+    - name: Wait for PODs to be ready
+      shell: kubectl wait pods -n argocd --all --for condition=Ready --timeout=90s
+
+# Further steps to get ArgoCD UI working
+# https://shashanksrivastava.medium.com/install-configure-argo-cd-on-kind-kubernetes-cluster-f0fee69e5ac4
+- name: Configure ArgoCD
+  hosts: master
+  become: true
+  become_user: root
+  tasks:
+    - name:  Exposing argocd-server to external IP
+      shell: kubectl patch svc argocd-server -n argocd -p '{"spec":{"ports":[{"port":443,"targetPort":8080,"name":"https"},{"port":80,"targetPort":8080,"name":"http"}],"type":"LoadBalancer"}}'
+    - name: Grab the admin password
+      shell: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+      register: argocd_passwd
+    - name: Print logging in information for ArgoCD
+      debug:
+        msg: "Address https://192.168.56.240 (or other - see service argocd-server) user: admin, password: {{ argocd_passwd.stdout_lines[0] }}    "
