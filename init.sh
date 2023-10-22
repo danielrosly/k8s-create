@@ -31,7 +31,7 @@ mkdir -p ~/.kube
 echo "Coping ansible configuration"
 echo "Ignoring /etc/ansible/hosts, using variable to point out inventory in current dir."
 current_dir=$(pwd)
-cp "/mnt/e/Danek/Dokumenty/MojeProgramy/DevOps/VirtualBox_UbuntuCloudImage/Group_Linux${1}/hosts" $current_dir
+cp "/mnt/e/Danek/Dokumenty/GitHub/vm-farm/src/Group_Linux${1}/hosts" $current_dir
 echo 
 echo "Run following command:     export ANSIBLE_INVENTORY=$current_dir/hosts"
 echo

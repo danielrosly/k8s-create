@@ -76,12 +76,6 @@
   become: true
   become_user: root
   tasks:
-  - name: Install ntp
-    apt:
-      name: ntp
-      state: present
-  - name: Force update date
-    shell: systemctl restart ntp
   - name: Clear before updating cache
     file:
       path: /var/lib/apt/lists/
@@ -90,10 +84,18 @@
     file:
       path: /var/lib/apt/lists/
       state: directory
-  - name: Update package cache and upgrade installed software
+  - name: Update package cache
     apt:
       update_cache: yes
+  - name: Upgrade installed software
+    apt:
       upgrade: 'yes'
+  - name: Install ntp
+    apt:
+      name: ntp
+      state: present
+  - name: Force update date
+    shell: systemctl restart ntp
   - name: Restart machines
     reboot:
       reboot_timeout: 360

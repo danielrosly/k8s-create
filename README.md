@@ -57,6 +57,19 @@ all:
           ansible_ssh_private_key_file: "~/.ssh/id_rsa"
 ```
 
+## Local configuration
+
+Second playbook copies kubeconfig to local home from which playbooks are run.
+For `kubectl` command to work it is also needed to proper set of entries to be put into `/etc/hosts`. For configuation presented above, it can be done with following:
+```
+echo '192.168.56.111 master.kubernetes.lab' | sudo tee -a /etc/hosts
+echo '192.168.56.112 wrk-01.kubernetes.lab' | sudo tee -a /etc/hosts
+echo '192.168.56.113 wrk-02.kubernetes.lab' | sudo tee -a /etc/hosts
+```
+If solution is used from WSL, please remember that `/etc/hosts` file is overwritten, so it is good to add these commands to `.bashrc` with proper conditions.
+
+Also, Bash script doing all above is present in root of this repository. It is called `init.sh`.
+
 ## More info
 
 Playbooks are based on things found in Internet. These things are referenced in documents.

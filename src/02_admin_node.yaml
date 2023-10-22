@@ -89,8 +89,12 @@
   become_user: root
   gather_facts: no
   tasks:
-    - name: Fetch File from Remote Host
-      fetch:
-        src: /root/.kube/config
-        dest: ~/.kube/
-        flat: yes
+  - name: Copy kubeconfig to current user
+    shell: |
+      cp -r /root/.kube ~
+      chown -R $USER:$GROUP ~/.kube
+  - name: Fetch File from Remote Host
+    fetch:
+      src: /root/.kube/config
+      dest: ~/.kube/
+      flat: yes
