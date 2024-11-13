@@ -23,7 +23,7 @@ Then you can run
 
 `ansible-playbook 03_install_software.yaml`
 
-to install: Helm, Metrics-Server, LoadBalancer (Metal LB), ArgoCD.
+to install: Helm, Metrics-Server, LoadBalancer (Metal LB), ArgoCD. And the end of its execution, playbook prints information needed for connecting to ArgoCD.
 
 ## Inventory
 
